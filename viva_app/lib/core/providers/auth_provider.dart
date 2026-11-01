@@ -3,11 +3,9 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../network/api_client.dart';
-import '../router/app_router.dart' show rootNavigatorKey;
 import '../storage/cache_service.dart';
 import '../storage/secure_storage.dart';
 
@@ -143,7 +141,9 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
   /// Escape hatch for the splash 8-second timeout.
   void forceUnauthenticated() {
     _setUnauthenticated();
-    unawaited(Supabase.instance.client.auth.signOut().catchError((_) {}));
+    unawaited(Supabase.instance.client.auth
+        .signOut(scope: SignOutScope.local)
+        .catchError((_) {}));
   }
 
   Future<void> _ensureUserRow(Session session, int generation) async {
@@ -160,7 +160,7 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
       }
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) {
-        await Supabase.instance.client.auth.signOut();
+        await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
         if (_isCurrentGeneration(generation)) _setUnauthenticated();
         return;
       }
@@ -228,6 +228,8 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     }
     _isLoggingOut = true;
 
+    // Capture the token up front, before anything tears down the session: the
+    // backend audit and the global revoke both need a still-valid access token.
     final accessToken =
         Supabase.instance.client.auth.currentSession?.accessToken;
     final storage = ref.read(secureStorageProvider);
@@ -236,33 +238,13 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     debugPrint('[Auth] LOGOUT START');
 
     try {
-      // 1. Backend audit FIRST — token still valid at this point.
-      //    NULLs fcm_token and writes the audit row.
-      if (accessToken != null) {
-        try {
-          debugPrint('[Auth] calling backend /auth/logout');
-          await api.post(
-            '/auth/logout',
-            options:
-                Options(headers: {'Authorization': 'Bearer $accessToken'}),
-          );
-          debugPrint('[Auth] backend /auth/logout SUCCESS');
-        } catch (e) {
-          debugPrint('[Auth] backend /auth/logout FAILED: $e');
-        }
-      } else {
-        debugPrint('[Auth] no access token — skipping backend call');
-      }
-
-      // 2. Wipe cache.
+      // 1. Wipe cache + app local data (memberId, onboarding flag). Fast/local.
       try {
         await CacheService.invalidateAll();
         debugPrint('[Auth] cache invalidated');
       } catch (e) {
         debugPrint('[Auth] cache clear failed: $e');
       }
-
-      // 3. Clear local user data (memberId, onboarding flag).
       try {
         await storage.clearAppData();
         debugPrint('[Auth] clearAppData done');
@@ -270,26 +252,47 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
         debugPrint('[Auth] clearAppData failed: $e');
       }
 
-      // 4. Revoke the Supabase session.
-      try {
-        await Supabase.instance.client.auth.signOut();
-        debugPrint('[Auth] Supabase.signOut() done');
-      } catch (e) {
-        debugPrint('[Auth] Supabase.signOut() failed: $e');
-      }
-
-      // 5. Flip auth state — triggers router redirect.
+      // 2. Flip auth state NOW — the router redirects to /login immediately.
+      //    NOT gated on the network audit or global signOut below, so logout
+      //    feels instant and never strands the UI on a black screen.
       _setUnauthenticated();
-      debugPrint('[Auth] LOGOUT COMPLETE');
+      debugPrint('[Auth] LOGOUT COMPLETE (UI flipped)');
 
-      // 6. Force GoRouter to re-evaluate its redirect immediately.
-      //    ref.listen fires asynchronously and can miss the state change
-      //    when the shell widget tree is mid-disposal.
-      final ctx = rootNavigatorKey.currentContext;
-      if (ctx != null && ctx.mounted) {
-        GoRouter.of(ctx).refresh();
-        debugPrint('[Auth] GoRouter refreshed');
-      }
+      // 3. Backend audit THEN global signOut, fire-and-forget. The audit runs
+      //    first (access token still valid, captured above) and before the
+      //    session is revoked. signOut(scope: global) removes the local Supabase
+      //    session via its signedOut event BEFORE its own network revoke, so a
+      //    cold start cannot restore the session even if the revoke fails.
+      //
+      //    ponytail: the audit is awaited before signOut (honors
+      //    audit-before-revoke); a hung backend delays the local session
+      //    teardown up to the Dio receiveTimeout (60s). Upgrade: pass a short
+      //    per-request receiveTimeout on the audit so a slow backend can't
+      //    delay it.
+      unawaited(() async {
+        if (accessToken != null) {
+          try {
+            debugPrint('[Auth] calling backend /auth/logout');
+            await api.post(
+              '/auth/logout',
+              options:
+                  Options(headers: {'Authorization': 'Bearer $accessToken'}),
+            );
+            debugPrint('[Auth] backend /auth/logout SUCCESS');
+          } catch (e) {
+            debugPrint('[Auth] backend /auth/logout FAILED: $e');
+          }
+        } else {
+          debugPrint('[Auth] no access token — skipping backend call');
+        }
+        try {
+          await Supabase.instance.client.auth
+              .signOut(scope: SignOutScope.global);
+          debugPrint('[Auth] Supabase.signOut() done');
+        } catch (e) {
+          debugPrint('[Auth] Supabase.signOut() failed: $e');
+        }
+      }());
     } finally {
       _isLoggingOut = false;
     }
