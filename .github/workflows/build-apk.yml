@@ -1,4 +1,4 @@
-name: Build Release APK
+name: Build Release APK + AAB
 
 on:
   workflow_dispatch:  # manual trigger from GitHub UI
@@ -6,7 +6,7 @@ on:
     branches:
       - main          # auto-build on every push to main
     tags:
-      - 'v*'          # also triggers on version tags like v1.0.1
+      - 'v*'          # also triggers on version tags like v1.0.2
 
 jobs:
   build:
@@ -45,18 +45,34 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: flutter build apk --release
 
-      - name: Verify APK exists
+      - name: Build release AAB (for Indus Appstore / Play Store)
+        working-directory: viva_app
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/viva_app/android/keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: flutter build appbundle --release
+
+      - name: Verify artifacts exist
         run: |
-          if [ ! -f viva_app/build/app/outputs/flutter-apk/app-release.apk ]; then
-            echo "❌ APK build failed - file not found"
-            exit 1
-          fi
-          echo "✅ APK built successfully"
-          ls -lh viva_app/build/app/outputs/flutter-apk/app-release.apk
+          APK=viva_app/build/app/outputs/flutter-apk/app-release.apk
+          AAB=viva_app/build/app/outputs/bundle/release/app-release.aab
+          if [ ! -f "$APK" ]; then echo "❌ APK not found"; exit 1; fi
+          if [ ! -f "$AAB" ]; then echo "❌ AAB not found"; exit 1; fi
+          echo "✅ APK: $(du -sh $APK | cut -f1)"
+          echo "✅ AAB: $(du -sh $AAB | cut -f1)"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: viva-release-apk
           path: viva_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: Upload AAB (Indus Appstore / Play Store)
+        uses: actions/upload-artifact@v4
+        with:
+          name: viva-release-aab
+          path: viva_app/build/app/outputs/bundle/release/app-release.aab
           retention-days: 30
