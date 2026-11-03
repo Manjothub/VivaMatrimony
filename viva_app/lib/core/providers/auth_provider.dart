@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../network/api_client.dart';
+import '../router/app_router.dart' show rootNavigatorKey;
 import '../storage/cache_service.dart';
 import '../storage/secure_storage.dart';
 
@@ -85,7 +87,9 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
           try { await ref.read(secureStorageProvider).clearAppData(); } catch (_) {}
           try { await CacheService.invalidateAll(); } catch (_) {}
           // Idempotent: logout() already set this, but the stream fires too.
-          state = const AsyncValue.data(AuthState.unauthenticated());
+          // Route through _setUnauthenticated() so the router-refresh guard
+          // also runs on this path (token expiry, server-side revocation).
+          _setUnauthenticated();
           return;
         }
 
@@ -136,6 +140,20 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     _authGeneration++;
     debugPrint('[Auth] _setUnauthenticated gen=$_authGeneration');
     state = const AsyncValue.data(AuthState.unauthenticated());
+    _forceRouterRedirect();
+  }
+
+  /// Explicitly refresh GoRouter so it re-evaluates its redirect immediately.
+  /// The ref.listen in routerProvider fires asynchronously and can miss the
+  /// state change if the shell widget tree is mid-disposal during logout.
+  /// refresh() forces a synchronous redirect re-evaluation without pushing a
+  /// new route, so there is no double-navigation race.
+  void _forceRouterRedirect() {
+    final ctx = rootNavigatorKey.currentContext;
+    if (ctx != null && ctx.mounted) {
+      GoRouter.of(ctx).refresh();
+      debugPrint('[Auth] GoRouter refreshed after auth flip');
+    }
   }
 
   /// Escape hatch for the splash 8-second timeout.

@@ -41,9 +41,11 @@ import '../../features/notifications/presentation/screens/notifications_screen.d
 import '../providers/auth_provider.dart';
 import '../../shared/constants/app_constants.dart';
 
-/// Root navigator key — used by AuthNotifier to navigate imperatively to
-/// /login on logout without importing routerProvider (which would be circular).
-/// Pass this to GoRouter so it owns the root Navigator.
+/// Root navigator key — used by AuthNotifier to force a synchronous
+/// GoRouter.refresh() after the auth state flips to unauthenticated (logout /
+/// token expiry), so the redirect always re-runs even when the ref.listen
+/// bridge is missed mid-disposal. Pass this to GoRouter so it owns the root
+/// Navigator.
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 
 final routerProvider = Provider<GoRouter>((ref) {
@@ -132,23 +134,80 @@ final routerProvider = Provider<GoRouter>((ref) {
         pageBuilder: (_, s) => _instantPage(s, const WelcomeScreen()),
       ),
 
-      // Onboarding
-      GoRoute(path: AppRoutes.onboardingBasic, builder: (_, s) => OnboardingBasicScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingBio, builder: (_, s) => OnboardingBioScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingEducation, builder: (_, s) => OnboardingEducationScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingCareer, builder: (_, s) => OnboardingCareerScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingFamily, builder: (_, s) => OnboardingFamilyScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingLifestyle, builder: (_, s) => OnboardingLifestyleScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingNativePlace, builder: (_, s) => OnboardingNativePlaceScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingPreferences, builder: (_, s) => OnboardingPreferencesScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingPhotos, builder: (_, s) => OnboardingPhotosScreen(isEditing: s.extra == true)),
-      GoRoute(path: AppRoutes.onboardingCommunity, builder: (_, s) => OnboardingCommunityScreen(isEditing: s.extra == true)),
+      // Onboarding + verification + detail/settings routes use _instantPage
+      // for the same reason as the shell: logout can be triggered from the
+      // settings screen, and any default MaterialPage fade leaves a one-frame
+      // black canvas when the redirect replaces the stack with /login.
+      GoRoute(
+        path: AppRoutes.onboardingBasic,
+        pageBuilder: (_, s) =>
+            _instantPage(s, OnboardingBasicScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingBio,
+        pageBuilder: (_, s) =>
+            _instantPage(s, OnboardingBioScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingEducation,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingEducationScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingCareer,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingCareerScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingFamily,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingFamilyScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingLifestyle,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingLifestyleScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingNativePlace,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingNativePlaceScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingPreferences,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingPreferencesScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingPhotos,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingPhotosScreen(isEditing: s.extra == true)),
+      ),
+      GoRoute(
+        path: AppRoutes.onboardingCommunity,
+        pageBuilder: (_, s) => _instantPage(
+            s, OnboardingCommunityScreen(isEditing: s.extra == true)),
+      ),
 
       // Verification
-      GoRoute(path: AppRoutes.verificationSelect, builder: (_, __) => const VerificationSelectScreen()),
-      GoRoute(path: AppRoutes.verificationReference, builder: (_, __) => const VerificationReferenceScreen()),
-      GoRoute(path: AppRoutes.verificationCertificate, builder: (_, __) => const VerificationCertificateScreen()),
-      GoRoute(path: AppRoutes.verificationStatus, builder: (_, __) => const VerificationStatusScreen()),
+      GoRoute(
+        path: AppRoutes.verificationSelect,
+        pageBuilder: (_, s) => _instantPage(s, const VerificationSelectScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.verificationReference,
+        pageBuilder: (_, s) =>
+            _instantPage(s, const VerificationReferenceScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.verificationCertificate,
+        pageBuilder: (_, s) =>
+            _instantPage(s, const VerificationCertificateScreen()),
+      ),
+      GoRoute(
+        path: AppRoutes.verificationStatus,
+        pageBuilder: (_, s) => _instantPage(s, const VerificationStatusScreen()),
+      ),
 
       // Main app shell — pageBuilder with zero-duration transition so the
       // shell exits instantly when the redirect replaces it with /login.
@@ -180,24 +239,24 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
 
       // Detail / settings routes
-      GoRoute(path: AppRoutes.editProfile, builder: (_, __) => const EditProfileScreen()),
-      GoRoute(path: AppRoutes.biodata, builder: (_, __) => const BiodataScreen()),
+      GoRoute(path: AppRoutes.editProfile, pageBuilder: (_, s) => _instantPage(s, const EditProfileScreen())),
+      GoRoute(path: AppRoutes.biodata, pageBuilder: (_, s) => _instantPage(s, const BiodataScreen())),
       GoRoute(
         path: '/profile/:userId',
-        builder: (context, state) =>
-            ProfileDetailScreen(userId: state.pathParameters['userId']!),
+        pageBuilder: (context, state) => _instantPage(
+            state, ProfileDetailScreen(userId: state.pathParameters['userId']!)),
       ),
-      GoRoute(path: AppRoutes.notifications, builder: (_, __) => const NotificationsScreen()),
-      GoRoute(path: AppRoutes.settings, builder: (_, __) => const SettingsScreen()),
-      GoRoute(path: AppRoutes.privacy, builder: (_, __) => const PrivacyScreen()),
-      GoRoute(path: AppRoutes.helpSupport, builder: (_, __) => const HelpScreen()),
+      GoRoute(path: AppRoutes.notifications, pageBuilder: (_, s) => _instantPage(s, const NotificationsScreen())),
+      GoRoute(path: AppRoutes.settings, pageBuilder: (_, s) => _instantPage(s, const SettingsScreen())),
+      GoRoute(path: AppRoutes.privacy, pageBuilder: (_, s) => _instantPage(s, const PrivacyScreen())),
+      GoRoute(path: AppRoutes.helpSupport, pageBuilder: (_, s) => _instantPage(s, const HelpScreen())),
       GoRoute(
         path: '/report/:userId',
-        builder: (context, state) =>
-            ReportScreen(reportedUserId: state.pathParameters['userId']!),
+        pageBuilder: (context, state) => _instantPage(
+            state, ReportScreen(reportedUserId: state.pathParameters['userId']!)),
       ),
-      GoRoute(path: AppRoutes.whoViewedMe, builder: (_, __) => const WhoViewedMeScreen()),
-      GoRoute(path: AppRoutes.mutualMatches, builder: (_, __) => const MutualMatchesScreen()),
+      GoRoute(path: AppRoutes.whoViewedMe, pageBuilder: (_, s) => _instantPage(s, const WhoViewedMeScreen())),
+      GoRoute(path: AppRoutes.mutualMatches, pageBuilder: (_, s) => _instantPage(s, const MutualMatchesScreen())),
     ],
     errorBuilder: (context, state) => Scaffold(
       body: Center(
